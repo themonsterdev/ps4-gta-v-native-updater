@@ -47,7 +47,7 @@ In this example, `sub_228BC10` is the registerNative function. That is the funct
 
 ### 5. Select a natives header file
 
-This is a clean `natives.h` downloaded from nativedb. You can always find the latest version of this at http://www.dev-c.com/nativedb/natives.h
+This is a clean `natives.h` downloaded from nativedb. You can always find the latest version of this at https://alloc8or.re/gta5/nativedb/
 
 ### 6. That's it! The script is done
 
