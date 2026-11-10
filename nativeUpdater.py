@@ -1,3 +1,20 @@
+# IDA Pro Version 9.3
+ 
+import ida_kernwin
+import ida_bytes
+import ida_ua
+import ida_xref
+import ida_funcs
+import idaapi
+import idc
+import idautils
+
+GetMnem         = ida_ua.print_insn_mnem
+GetOpnd         = ida_ua.print_operand
+GetOperandValue = idc.get_operand_value
+XrefsTo         = idautils.XrefsTo
+AskFile         = ida_kernwin.ask_file
+
 # Predefined system native hashes
 # System native hashes do not change between updates
 systemNatives = [
@@ -28,6 +45,16 @@ systemNatives = [
     0xBBDA792448DB5A89,
     0x42B65DEEF2EDF2A1
 ]
+
+# Compat IDA 7.x → 9.x
+def PrevHead(ea, minea=0):
+    return ida_bytes.prev_head(ea, minea)
+
+def NextHead(ea, maxea=idaapi.BADADDR):
+    return ida_bytes.next_head(ea, maxea)
+
+def choose_func(title="Select function"):
+    return idc.choose_func(title)
 
 # Read crossmap file into dictionary
 def parseCrossmap():
@@ -136,47 +163,73 @@ def findSystemNatives(mergedMap):
 # Overwrite native hashes in clean header with function addresses
 def createHeader(mergedMap):
     fileName = AskFile(False, "", "Choose a native header file")
+    if not fileName:
+        print("No header file selected.")
+        return
+
+    outputFileName = AskFile(True, "newHeader.h", "Save updated header as")
+    if not outputFileName:
+        print("No output file selected. Aborting.")
+        return
+
     file = open(fileName, "r")
     raw_lines = file.readlines()
-
-    missedNatives = 0
-    for i in range(0, len(raw_lines)):
-        line = raw_lines[i]
-        if "invoke" in line:
-            openParenthSplit = line.split(">(")
-            closeParenthSplit = openParenthSplit[1].split(")")
-            
-            hash = None
-            commaSplit = None
-
-            if len(closeParenthSplit[0]) > 10:
-                commaSplit = closeParenthSplit[0].split(",")
-                hash = commaSplit[0]
-            else:
-                hash = closeParenthSplit[0]
-
-            function = mergedMap.get(int(hash, 16))
-            newLine = openParenthSplit[0] + ">("
-            
-            if function:
-                formFunc = hex(function).split("0x")
-                formFunc = formFunc[1].replace('L', '').upper()
-                newLine += "0x" + formFunc
-            else:
-                # Write DEADBEEF for hashes not found
-                newLine += "0xDEADBEEF"
-                missedNatives += 1
-                print("Failed to find address for " + hex(int(hash, 16)))
-            
-            newLine += closeParenthSplit[0].split(hash)[1] + ")"
-            newLine += closeParenthSplit[1]
-            
-            raw_lines[i] = newLine    
-
     file.close()
 
-    newFile = open("newHeader.h", "w")
-    newFile.writelines(raw_lines)
+    missedNatives = 0
+    updated_lines = []
+
+    for line in raw_lines:
+        # On vérifie que la ligne contient bien "invoke" et ">("
+        if "invoke" in line and ">(" in line:
+            try:
+                # Sépare autour de ">("
+                openParenthSplit = line.split(">(")
+                if len(openParenthSplit) < 2:
+                    updated_lines.append(line)
+                    continue
+
+                closeParenthSplit = openParenthSplit[1].split(")")
+                if len(closeParenthSplit) < 1:
+                    updated_lines.append(line)
+                    continue
+
+                hash_str = closeParenthSplit[0].strip()
+                if "," in hash_str:
+                    hash_str = hash_str.split(",")[0].strip()
+
+                # Conversion du hash en entier
+                hash_int = int(hash_str, 16)
+                function = mergedMap.get(hash_int)
+
+                # Reconstitution de la ligne avec l'adresse trouvée ou DEADBEEF
+                newLine = openParenthSplit[0] + ">("
+                if function:
+                    formFunc = hex(function).split("0x")[1].replace('L', '').upper()
+                    newLine += "0x" + formFunc
+                else:
+                    newLine += "0xDEADBEEF"
+                    missedNatives += 1
+                    print("Failed to find address for " + hex(hash_int))
+
+                # Ajout de la fin de la ligne d'origine
+                rest_of_line = ")" + ")".join(closeParenthSplit[1:])
+                if len(closeParenthSplit) > 1 and hash_str in closeParenthSplit[0]:
+                    # Préserve les éventuels commentaires ou arguments suivants
+                    remainder = closeParenthSplit[0].replace(hash_str, "", 1)
+                    newLine = openParenthSplit[0] + ">(" + ("0x" + formFunc if function else "0xDEADBEEF") + remainder + ")" + ")".join(closeParenthSplit[1:])
+                else:
+                    newLine += "".join(closeParenthSplit[1:])
+                
+                updated_lines.append(newLine)
+            except Exception as e:
+                # Si une ligne pose problème, on la laisse intacte pour ne pas crasher
+                updated_lines.append(line)
+        else:
+            updated_lines.append(line)
+
+    newFile = open(outputFileName, "w")
+    newFile.writelines(updated_lines)
     newFile.close()
 
     print("newHeader.h created")
